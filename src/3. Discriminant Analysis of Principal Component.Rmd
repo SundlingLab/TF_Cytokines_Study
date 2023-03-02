@@ -1,0 +1,93 @@
+---
+title: "Tropical Fever Project"
+author: "Victor Yman & Zaynab Mousavian"
+date: "Dec. 2022"
+output:
+  html_document: default
+  pdf_document: default
+subtitle: Discriminant Analysis of Principal Component
+---
+
+### Load data and packages
+
+```{r setup, include=FALSE}
+library(adegenet)
+library(foreach)
+library(adegenet)
+library(dplyr)
+load("../Data/ReadyData.RData")
+```
+
+### Run Discriminant Analysis of Principal Component
+
+```{r}
+cyt_nest <- cyt_norm %>%
+  group_by(cyt_name) %>%
+  nest()
+
+cyt_rob_df <- cyt_nest %>%
+  unnest(cols = c(data)) %>% ungroup() %>%
+  select(id, Group, cytokine, rob_value) %>%
+  pivot_wider(names_from = "cytokine", values_from = "rob_value")
+
+cyt_rob_matrix <- as.matrix(cyt_rob_df[,3:ncol(cyt_rob_df)])
+
+
+set.seed(6)
+
+Group_vect <- cyt_df$Group
+pathogen <- levels(Group_vect)
+path_cols <- brewer.pal(8, "Set1")[c(3,1,2,4,5,8)]
+
+dapc_cyt <- dapc(cyt_rob_matrix, Group_vect, scale = F, center=T, n.pca = 26, n.da = 5)
+
+scatter(dapc_cyt, 1,1, legend = T, col = path_cols)
+
+
+fun_myPCAInset <- function(){
+  temp <- dapc_cyt$pca.eig
+  temp <- 100* cumsum(temp)/sum(temp)
+  plot(temp, col=rep(c("black","lightgrey"),
+                     c(dapc_cyt$n.pca,100)), ylim=c(0,100),
+       cex=1, pch=20, type="h", lwd=1.5, 
+       xaxt = "n", xlab = "", yaxt = "n", ylab = "")
+  axis(1, cex.axis = 0.5, line = 0.1, mgp = c(1,0.1,1))
+  axis(2, cex.axis = 0.5, line = 0.1, mgp = c(1,0.5,1), las = 1)
+  title(main = "PCA Eigenvalues", cex.main = 0.7, line = 0.1)
+}
+
+fun_myDAInset <- function(xax, yax){
+  myCol <- rep("white", length(dapc_cyt$eig)) 
+  myCol[1:dapc_cyt$n.da] <- "grey"
+  myCol[c(xax, yax)] <- "black"
+  myCol <- transp(myCol, 0.5)
+  barplot(dapc_cyt$eig, col = myCol, xaxt = "n", yaxt = "n", 
+          ylim = c(0, dapc_cyt$eig[1] * 1.1))
+  title(main = "DA Eigenvalues", cex.main = 0.7, line = 0.1)
+  box()
+}
+```
+
+### Visulize results (Figures 3, S5 and S6)
+
+```{r}
+comp_combo <- t(combn(1:5, 2))
+
+pdf(file = "../Results/DAPC/dapc_scatter.pdf")
+foreach (i = 1:nrow(comp_combo)) %do% {
+  scatter.dapc(dapc_cyt, comp_combo[i,1], comp_combo[i,2], col = path_cols, scree.pca = F, scree.da = F, clabel = F,
+               cex = 2, 
+               legend = T, posi.leg = "bottomright", cleg= 0.8)
+  add.scatter(fun_myPCAInset(), inset = c(-0.075, - 0.1), posi = "topleft", ratio = 0.15)
+  add.scatter(fun_myDAInset(comp_combo[i,1],comp_combo[i,2]), inset = c(-0.05, - 0.1), posi = "topright", ratio = 0.15)
+}
+dev.off()
+
+pdf(file = "../Results/DAPC/dapc_loadings.pdf")
+foreach (i = 1:dapc_cyt$n.da) %do% {
+  loadingplot(dapc_cyt$var.contr, axis = i, lwd = 4,
+              cex.lab = .9, adj = c(-.2, .5), srt= 90)
+}
+dev.off()
+```
+

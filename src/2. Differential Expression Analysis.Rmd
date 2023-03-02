@@ -1,0 +1,155 @@
+---
+title: "Tropical Fever Project"
+author: "Victor Yman & Zaynab Mousavian"
+date: "Dec. 2022"
+output:
+  html_document: default
+  pdf_document: default
+subtitle: Differential Gene Expression
+---
+
+### R packages setup and loading data
+
+```{r warning = FALSE, message = FALSE}
+library(tidyverse)
+library(limma)
+library(reshape2)
+library(ggplot2)
+library(corrplot)
+library(ggforce)
+library(RColorBrewer)
+load("../Data/ReadyData.RData")
+```
+
+### Differential expression analysis using wilcox.test
+
+```{r message=FALSE, warning=FALSE}
+Comparisons = c("DengueVirus-HealthyControl","EntericBacteria-HealthyControl","InfluenzaVirus-HealthyControl","Pfalciparum-HealthyControl","PulmonaryBacteria-HealthyControl","EntericBacteria-DengueVirus","InfluenzaVirus-DengueVirus","Pfalciparum-DengueVirus","PulmonaryBacteria-DengueVirus","InfluenzaVirus-EntericBacteria","Pfalciparum-EntericBacteria","PulmonaryBacteria-EntericBacteria","Pfalciparum-InfluenzaVirus","PulmonaryBacteria-InfluenzaVirus","PulmonaryBacteria-Pfalciparum")
+logFC=list()
+pValue=list()
+DEtest = function(x){
+  group1=sub("-.*","",x)
+  group2=sub(".*-","",x)
+  logFC[[x]] <<- apply(cyt_log,1,function(row) median(row[which(NewGroup==group1)])-median(row[which(NewGroup==group2)]))
+  pValue[[x]] <<- apply(cyt_log,1,function(row)  wilcox.test(row[which(NewGroup==group1)],row[which(NewGroup==group2)],paired = FALSE)$p.value)
+}
+l=lapply(Comparisons, function(x) DEtest(x))
+logFC=as.data.frame(logFC)
+pValue=as.data.frame(pValue)
+names(logFC) <- gsub("\\."," - ",names(logFC))
+names(pValue) <- gsub("\\."," - ",names(pValue))
+qValue <- apply(pValue,2,function(x) p.adjust(x,method = "BH"))
+DEG_wilcox <- cbind(logFC=logFC,qValue=qValue)
+write.csv(DEG_wilcox,file="../Results/DEA/DE-Results-wilcox.csv")
+```
+
+### Make DE results ready for visualization
+
+```{r message=FALSE, warning=FALSE}
+volcanoPlot_data <- DEG_wilcox
+logFC_data <- volcanoPlot_data[,1:15]
+qValue_data <- volcanoPlot_data[,16:30]
+logFC_data$Cytokine=row.names(logFC_data)
+dotPlot_data <- melt(logFC_data,id="Cytokine")
+qValue_data$Cytokine=row.names(qValue_data)
+dotPlot_data_2 <- melt(qValue_data,id="Cytokine")
+dotPlot_data$variable <- gsub("logFC.","",dotPlot_data$variable)
+dotPlot_data$qValue <- dotPlot_data_2$value
+names(dotPlot_data)=c("Cytokine","Comparison","logFC","FDR")
+dotPlot_data <- dotPlot_data[which(dotPlot_data$FDR<0.05),]
+dotPlot_data <- dotPlot_data[which(abs(dotPlot_data$logFC)>1),]
+dotPlot_data$FDR <- -log10(dotPlot_data$FDR)
+```
+
+### Summarize DE results for each pathogen in Excell file
+
+```{r message=FALSE, warning=FALSE}
+computeFreq = function(type)
+{
+  list=grep(type,dotPlot_data$Comparison)
+  data_1 <- dotPlot_data[-list,]
+  data_2 <- dotPlot_data[list,]
+  freq_1=as.data.frame(table(data_1$Cytokine))
+  freq_2=as.data.frame(table(data_2$Cytokine))
+  freq_merged = merge(freq_1,freq_2,by="Var1",all = TRUE)
+  freq_merged[is.na(freq_merged)]=0
+  freq_merged$diff=freq_merged$Freq.y - freq_merged$Freq.x
+  freq_merged=freq_merged[order(freq_merged$diff,decreasing = TRUE),]
+  write.csv(freq_merged,file=paste0("../Results/DEA/",type,"-DEG-wilcox.csv"))
+}
+l=lapply(unique(NewGroup),function(x) computeFreq(x))
+```
+
+### Visualize significant results by dotplot (Figure 2)
+
+```{r message=FALSE, warning=FALSE, fig.width=15, fig.height=8}
+dotPlot_data$Cytokine <- gsub("\\.","",dotPlot_data$Cytokine)
+dotPlot_data$Comparison= fct_relevel(dotPlot_data$Comparison,c("DengueVirus - HealthyControl","EntericBacteria - HealthyControl","InfluenzaVirus - HealthyControl","Pfalciparum - HealthyControl","PulmonaryBacteria - HealthyControl","EntericBacteria - DengueVirus","InfluenzaVirus - DengueVirus","Pfalciparum - DengueVirus","PulmonaryBacteria - DengueVirus","InfluenzaVirus - EntericBacteria","Pfalciparum - EntericBacteria","PulmonaryBacteria - EntericBacteria","Pfalciparum - InfluenzaVirus","PulmonaryBacteria - InfluenzaVirus","PulmonaryBacteria - Pfalciparum"))
+
+pdf(file="../Results/DEA/DE-results-logFC1-wilcox-increasedSize.pdf",width=15,height = 4.5)
+ggplot(dotPlot_data,aes(x=Cytokine,y=Comparison))+
+  geom_point(aes_string(size = 'FDR', color = 'logFC'))+
+  theme_bw()+
+  labs(color="LogFC",size="-Log10(FDR)",x="Cytokines",y="Comparisons")+
+  theme(text=element_text(size=12),axis.title = element_text(face=2),axis.text.x=element_text(angle=90,hjust=1,vjust=0.5,size=12,face=1),axis.text.y=element_text(vjust=0.5,hjust=1,size=12,face=1),legend.title = element_text(size=10,face=2))+
+  scale_colour_gradientn(colours=rev(COL2('RdBu', 100)),breaks=c(-4,-2,0,2,4), labels=c(-4,-2,0,2,4))+
+  scale_size(range = c(3,7))
+dev.off()
+```
+
+### Visualize significant results by boxplot (Figure 2)
+
+```{r}
+cytokines <- sort(setdiff(unique(dotPlot_data$Cytokine),c("GM.CSF")))
+cyt_log <- log2(cyt_df[,4:52])
+cyt_log <- cyt_log[,cytokines]
+boxplot_Data <- as.data.frame(cyt_log)
+boxplot_Data$Group=Group
+boxplot_Data <- melt(boxplot_Data)
+names(boxplot_Data)=c("Group","Cytokine","Level")
+
+boxplot_Data$Cytokine <- gsub("\\.","",boxplot_Data$Cytokine)
+
+path_cols <- brewer.pal(8, "Set1")[c(3,1,2,4,5,8)]
+pdf(file="../Results/DEA/Boxplot.pdf",width=15,height = 8)
+ggplot(boxplot_Data, aes( y = Level,x=Group,fill=Group))+
+  geom_boxplot(alpha = 0.3,width=0.5)+
+  geom_point(aes(color=Group,alpha=0.8),position=position_jitterdodge(dodge.width=0.3), size=1)+
+  theme_bw()+
+  scale_fill_manual(values = path_cols)+
+  scale_color_manual(values = path_cols)+
+  labs(x= "",y="log2(Cytokine level)",color="")+
+  guides(fill=FALSE,alpha=FALSE,color = guide_legend(nrow = 1, byrow = TRUE,override.aes = list(size = 5)))+
+  theme(axis.text.x=element_blank(),legend.position = "top",legend.box="vertical", text=element_text(size=14))+
+  facet_wrap(~Cytokine, scales="free", ncol = 7, nrow = 4)
+dev.off()
+```
+
+### Visualize remaining cytokines by boxplot (Figure S4)
+
+```{r}
+cyt_log <- log2(cyt_df[,4:52])
+cytokines <- c("GM.CSF",sort(setdiff(colnames(cyt_log),unique(dotPlot_data$Cytokine))))
+cyt_log <- cyt_log[,cytokines]
+boxplot_Data <- as.data.frame(cyt_log)
+boxplot_Data$Group=Group
+boxplot_Data <- melt(boxplot_Data)
+names(boxplot_Data)=c("Group","Cytokine","Level")
+
+boxplot_Data$Cytokine <- gsub("\\.","",boxplot_Data$Cytokine)
+
+path_cols <- brewer.pal(8, "Set1")[c(3,1,2,4,5,8)]
+pdf(file="../Results/DEA/Boxplot-supp.pdf",width=15,height = 8)
+ggplot(boxplot_Data, aes( y = Level,x=Group,fill=Group))+
+  geom_boxplot(alpha = 0.3,width=0.5)+
+  geom_point(aes(color=Group,alpha=0.8),position=position_jitterdodge(dodge.width=0.3), size=1)+
+  theme_bw()+
+  scale_fill_manual(values = path_cols)+
+  scale_color_manual(values = path_cols)+
+  labs(x= "",y="log2(Cytokine level)",color="")+
+  guides(fill=FALSE,alpha=FALSE,color = guide_legend(nrow = 1, byrow = TRUE,override.aes = list(size = 5)))+
+  theme(axis.text.x=element_blank(),legend.position = "top",legend.box="vertical", text=element_text(size=14))+
+  facet_wrap(~Cytokine, scales="free", ncol = 7, nrow = 4)
+dev.off()
+```
+
