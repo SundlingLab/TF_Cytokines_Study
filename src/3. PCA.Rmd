@@ -1,0 +1,72 @@
+---
+title: "Tropical Fever Project"
+author: "Victor Yman & Zaynab Mousavian"
+date: "Dec. 2023"
+output:
+  html_document: default
+  pdf_document: default
+subtitle: Principle Component Analysis
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### R packages setup and loading data
+
+```{r}
+library(factoextra)
+library(cowplot)
+l=load("../Data/ReadyData.RData") 
+load("../Results/DEA/DE-cytokines.RData")
+path_cols <- brewer.pal(8, "Set1")[c(3,1,2,4,5,8)]
+```
+
+
+# Priniciple Component Analysis (Figure 3)
+
+```{r message=FALSE, warning=FALSE}
+row.names(cyt_log) <- gsub("\\.","",row.names(cyt_log))
+data <- t(cyt_log)
+res.pca <- prcomp(data, scale. = TRUE, rank. = 10)
+summary(res.pca)
+
+# Visulize scree plot
+fviz_eig(res.pca)
+
+# Visualize PC1 and PC2 by ggplot
+viz.pca <- as.data.frame(res.pca$x)
+
+p1 <- ggplot(viz.pca,aes(x=PC1,y=PC2))+
+  geom_point(aes(color=Group))+
+  labs(color="")+
+  scale_color_manual(values = path_cols,labels=c("Healthy controls","Dengue","Bacterial gastroenteritis","Influenza","Malaria","Bacterial respiratory tract infection"))+
+  labs(x=paste0("PC1: ",round(fviz_eig(res.pca)$data[1,"eig"]),"% expl. var"),y=paste0("PC2: ",round(fviz_eig(res.pca)$data[2,"eig"]),"% expl. var"))+
+  theme_bw()+
+  theme(axis.title = element_text(size=10))+
+  guides(color=FALSE)
+
+data <- t(cyt_log[DE_cytokines,])
+res.pca <- prcomp(data, scale. = TRUE, rank. = 10)
+summary(res.pca)
+
+# Visulize scree plot
+fviz_eig(res.pca)
+
+# Visualize PC1 and PC2 by ggplot
+viz.pca <- as.data.frame(res.pca$x)
+
+p2 <- ggplot(viz.pca,aes(x=PC1,y=PC2))+
+  geom_point(aes(color=Group))+
+  labs(color="")+
+  scale_color_manual(values = path_cols,labels=c("Healthy controls","Dengue","Bacterial gastroenteritis","Influenza","Malaria","Bacterial respiratory tract infection"))+
+  labs(x=paste0("PC1: ",round(fviz_eig(res.pca)$data[1,"eig"]),"% expl. var"),y=paste0("PC2: ",round(fviz_eig(res.pca)$data[2,"eig"]),"% expl. var"))+
+  theme_bw()+
+  theme(axis.title = element_text(size=10))+
+  guides(color=FALSE)
+
+pdf("../Results/PCA/PCA-both.pdf",width=8,height = 4)
+plot_grid(p1,p2,nrow = 1,ncol = 2)
+dev.off()
+```
+

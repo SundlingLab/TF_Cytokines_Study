@@ -1,0 +1,417 @@
+---
+title: "Tropical Fever Project"
+author: "Victor Yman & Zaynab Mousavian"
+date: "Dec. 2023"
+output:
+  html_document: default
+  pdf_document: default
+subtitle: Preprocessing
+---
+
+### R packages setup
+
+```{r message = FALSE, warning = FALSE}
+library(tidyverse)
+library(reshape2)
+library(RColorBrewer)
+library(ggforce)
+library(ggplot2)
+library(corrplot) 
+library(Hmisc)
+library(robustHD)
+library(correlation)
+library(igraph)
+library(ggraph)
+library(gridExtra)
+library(circlize)
+library(ComplexHeatmap)
+```
+
+### Read data and log transformation
+
+```{r message=FALSE, warning=FALSE}
+cyt_df <- read.delim(file = "../VY_figures_v20210712/input_data/cytokines_v20210614.csv",sep=";")
+cyt_df$NewGroup <- cyt_df$Group
+cyt_df$NewGroup <- gsub("Healthy control","HealthyControl",cyt_df$NewGroup)
+cyt_df$NewGroup <- gsub("Dengue virus","DengueVirus",cyt_df$NewGroup)
+cyt_df$NewGroup <- gsub("Enteric bacteria","EntericBacteria",cyt_df$NewGroup)
+cyt_df$NewGroup <- gsub("Influenza virus","InfluenzaVirus",cyt_df$NewGroup)
+cyt_df$NewGroup <- gsub("Pulmonary bacteria","PulmonaryBacteria",cyt_df$NewGroup)
+colnames(cyt_df)[1] <- "id" 
+
+# drop giardia data and data for one strange-looking healthy control
+cyt_df <- cyt_df %>% 
+  filter(Etiology!="Giardia", id!="HC_NC2017_02")
+
+cyt_df$NewGroup = factor(cyt_df$NewGroup,levels=c("HealthyControl","DengueVirus","EntericBacteria","InfluenzaVirus","Pfalciparum","PulmonaryBacteria"))
+cyt_df$Group = factor(cyt_df$Group,levels=c("Healthy control","Dengue virus","Enteric bacteria","Influenza virus","Pfalciparum","Pulmonary bacteria"))
+cyt_df <- cyt_df %>% arrange(Group)
+
+cyt_names <- colnames(cyt_df)[4:52]
+for(i in 1:length(cyt_names)) {
+  cyt_names[i] = gsub("[- ]", "", cyt_names[i])
+}
+colnames(cyt_df)[4:52] <- cyt_names
+grp <- cyt_df[,"NewGroup",drop=FALSE]
+NewGroup <- as.factor(grp$NewGroup)
+grp <- cyt_df[,"Group",drop=FALSE]
+Group <- as.factor(grp$Group)
+pathogen <- levels(Group)
+cyt_log <- t(log2(cyt_df[,4:52]))
+colnames(cyt_log) <- cyt_df$id
+
+set.seed(66688)
+
+cyt_norm <- cyt_df %>% 
+  group_by(Group) %>% 
+  dplyr::select(id:sTNF.RII, NewGroup)%>%
+  pivot_longer(names_to = "cytokine", values_to = "value", IL2:sTNF.RII) %>% 
+  mutate(cyt_name = cytokine, log2_value = log2(value), rob_value = robStandardize(log2_value, fallback = T))
+
+
+save(Group,NewGroup,cyt_log,cyt_df,cyt_norm,file="../Data/ReadyData.RData")
+```
+
+### Visualize cytokine levels using boxplot 
+
+```{r message=FALSE, warning=FALSE}
+load("../Data/ReadyData.RData")
+cyt_log <- log2(cyt_df[,4:52])
+boxplot_Data <- as.data.frame(cyt_log)
+boxplot_Data$Group=Group
+boxplot_Data <- melt(boxplot_Data)
+names(boxplot_Data)=c("Group","Cytokine","Level")
+
+path_cols <- brewer.pal(8, "Set1")[c(3,1,2,4,5,8)]
+boxplot_fun <- function(df) { 
+  ggplot(df, aes( y = Level,x=Group,fill=Group))+
+    geom_boxplot(alpha = 0.3,width=0.5)+
+    geom_point(aes(color=Group,alpha=0.8),position=position_jitterdodge(dodge.width=0.3), size=1)+
+    theme_bw()+
+    scale_fill_manual(values = path_cols)+
+    scale_color_manual(values = path_cols)+
+    labs(x= "",y="log2(Cytokine level)",color="")+
+    guides(fill=FALSE,alpha=FALSE,color = guide_legend(nrow = 1, byrow = TRUE,override.aes = list(size = 5)))+
+    theme(axis.text.x=element_blank(),legend.position = "top",legend.box="vertical", text=element_text(size=14))+
+    facet_wrap_paginate(~Cytokine, scales="free", ncol = 5, nrow = 6)
+}
+
+p <- boxplot_fun(boxplot_Data)
+for(i in 1:n_pages(p)){
+  p_save <-  p + 
+  facet_wrap_paginate(~Cytokine, scales="free",ncol = 5, nrow = 6, page = i)
+  ggsave(plot = p_save, filename = paste0('../Results/Preprocessing/page_', i, '.pdf'),width=10,height = 15)
+}
+```
+
+### Visualize clinical variables using boxplot (Figure S1)
+
+```{r}
+load("../Data/ReadyData.RData")
+clinical_data <- read_excel("../Data/TF-joint clinical table_selected_stats_vJun22.xlsx")
+cyt_df <- cyt_df %>%filter(id%in%clinical_data$ID)
+clinical_data <- clinical_data %>% arrange(match(ID,cyt_df$id))
+clinical_data$Group=cyt_df$Group
+
+path_cols <- brewer.pal(8, "Set1")[c(1,2,4,5,8)]
+p1=ggplot(clinical_data, aes(y = Age, x = Group, fill = Group))+
+    geom_boxplot(alpha = 0.3,width=0.5)+
+    geom_point(aes(color=Group,alpha=0.8),position=position_jitterdodge(dodge.width=0.3), size=1)+
+    theme_classic()+
+    scale_fill_manual(values = path_cols)+
+    scale_color_manual(values = path_cols)+
+    labs(x= "",y="Age",color="")+
+    guides(fill=FALSE,alpha=FALSE,color = FALSE)+
+    theme(axis.text.x=element_blank(),legend.position = "top",legend.box="vertical", text=element_text(size=16))
+
+p2=ggplot(clinical_data, aes(y = Maxtemp, x = Group, fill = Group))+
+    geom_boxplot(alpha = 0.3,width=0.5)+
+    geom_point(aes(color=Group,alpha=0.8),position=position_jitterdodge(dodge.width=0.3), size=1)+
+    theme_classic()+
+    scale_fill_manual(values = path_cols)+
+    scale_color_manual(values = path_cols)+
+    labs(x= "",y="Temperature",color="")+
+    guides(fill=FALSE,alpha=FALSE,color = FALSE)+
+    theme(axis.text.x=element_blank(),legend.position = "top",legend.box="vertical", text=element_text(size=16))
+
+p3=ggplot(clinical_data, aes(y = B_WBC, x = Group, fill = Group))+
+    geom_boxplot(alpha = 0.3,width=0.5)+
+    geom_point(aes(color=Group,alpha=0.8),position=position_jitterdodge(dodge.width=0.3), size=1)+
+    theme_classic()+
+    scale_fill_manual(values = path_cols)+
+    scale_color_manual(values = path_cols)+
+    labs(x= "",y="Leukocytes",color="")+
+    guides(fill=FALSE,alpha=FALSE,color = FALSE)+
+    theme(axis.text.x=element_blank(),legend.position = "top",legend.box="vertical", text=element_text(size=16))
+
+p4=ggplot(clinical_data, aes(y = B_PLT, x = Group, fill = Group))+
+    geom_boxplot(alpha = 0.3,width=0.5)+
+    geom_point(aes(color=Group,alpha=0.8),position=position_jitterdodge(dodge.width=0.3), size=1)+
+    theme_classic()+
+    scale_fill_manual(values = path_cols)+
+    scale_color_manual(values = path_cols)+
+    labs(x= "",y="Platelets",color="")+
+    guides(fill=FALSE,alpha=FALSE,color = FALSE)+
+    theme(axis.text.x=element_blank(),legend.position = "top",legend.box="vertical", text=element_text(size=16))
+
+p5=ggplot(clinical_data, aes(y = P_CRP, x = Group, fill = Group))+
+    geom_boxplot(alpha = 0.3,width=0.5)+
+    geom_point(aes(color=Group,alpha=0.8),position=position_jitterdodge(dodge.width=0.3), size=1)+
+    theme_classic()+
+    scale_fill_manual(values = path_cols)+
+    scale_color_manual(values = path_cols)+
+    labs(x= "",y="CRP",color="")+
+    guides(fill=FALSE,alpha=FALSE,color = FALSE)+
+    theme(axis.text.x=element_blank(),legend.position = "top",legend.box="vertical", text=element_text(size=16))
+
+library(cowplot)
+pdf(file="../Results/Preprocessing/ClinicalVariables_boxplot.pdf",width=20,height = 4)
+plot_grid(p1,p2,p3,p4,p5,labels=c("A","B","C","D","E"),ncol=5,label_size = 16)
+dev.off()
+```
+
+### Calculate "group"-wise median cytokine levels for each cytokine
+
+```{r}
+cyt_group_summary <- cyt_norm %>% 
+  group_by(cytokine, Group) %>% 
+  mutate(group_median = median(log2_value)) %>% 
+  distinct(group_median) %>% 
+  dplyr::select(cytokine, Group, group_median) %>%
+  group_by(cytokine) %>%
+  mutate(group_median_std = standardize(group_median),
+         group_median_std = ifelse(is.na(group_median_std), 0, group_median_std)) %>%
+  dplyr::select(cytokine, Group, group_median_std) %>%
+  pivot_wider(names_from = Group, values_from = group_median_std) %>%
+  dplyr::select(cytokine, `Healthy control`, `Dengue virus`, `Enteric bacteria`, `Influenza virus`,
+                `Pfalciparum`, `Pulmonary bacteria`)
+
+ 
+# nest by cytokine
+cyt_nest <- cyt_norm %>% 
+  group_by(cyt_name) %>% 
+  nest()
+
+# nest by infection type
+inf_nest_matrix <- log2(cyt_df[, 4:52])
+inf_nest_matrix$Group <- cyt_df$Group
+inf_nest_matrix <- inf_nest_matrix %>% 
+   filter(Group != "Healthy control") %>% 
+   group_by(Group) %>% 
+   nest()
+```
+
+### Visualize correlation matrix in all samples (Figure S2)
+
+```{r}
+corMethod="spearman"
+cyt_log <- log2(cyt_df[,4:52])
+colnames(cyt_log)=gsub("\\.","",colnames(cyt_log))
+par(mar= c(2,2,8,2))
+pdf(file = paste0("../Results/Preprocessing/Correlation-",corMethod,".pdf"), width = 15, height = 17)
+corrplot(cor(cyt_log, method = corMethod), type = "lower",
+         tl.col = "black", tl.cex = 1.4, order="hclust",col = COL2('RdBu', 200)[200:1])
+dev.off()
+
+flattenCorrMatrix <- function(cormat, pmat) {
+  ut <- upper.tri(cormat)
+  data.frame(
+    row = rownames(cormat)[row(cormat)[ut]],
+    column = rownames(cormat)[col(cormat)[ut]],
+    cor  =(cormat)[ut],
+    p = pmat[ut]
+  )
+}
+corr_mat <- rcorr(as.matrix(cyt_log), type = corMethod)
+flat_corr_mat <- flattenCorrMatrix(corr_mat$r, corr_mat$P)
+write.csv(flat_corr_mat, file= paste0("../Results/Preprocessing/Correlation-",corMethod,".csv"))
+flat_corr_mat <- flat_corr_mat %>% 
+  filter(abs(cor)>0.7 & p<0.05)
+write.csv(flat_corr_mat, file= paste0("../Results/Preprocessing/Correlation-significant-",corMethod,".csv"))
+```
+
+### Visualize correlation matrix including clinical variables in all samples excluding healthy controls  (Figure S4)
+
+```{r}
+corMethod="spearman"
+library(readxl)
+clinical_data <- read_excel("../Data/TF-joint clinical table_selected_stats_vJun22.xlsx")
+clinical_data <- clinical_data %>% filter(ID%in%cyt_df$id)
+clinical_data <- as.data.frame(clinical_data)
+row.names(clinical_data) <- clinical_data$ID
+clinical_data <- clinical_data %>% arrange(match(ID,cyt_df$id))
+clinical_data <- clinical_data %>% dplyr::select(Age,Maxtemp,P_CRP,B_WBC,B_PLT)
+library(tidyr)
+clinical_data <- clinical_data %>% drop_na()
+clinical_data <- log2(clinical_data)
+
+row.names(cyt_df) <- cyt_df$id
+cyt_df <- cyt_df[row.names(clinical_data),]
+cyt_log <- log2(cyt_df[,4:52])
+
+merged_data <- cbind(cyt_log,clinical_data)
+colnames(merged_data)=gsub("\\.","",colnames(merged_data))
+par(mar= c(2,2,8,2))
+pdf(file = paste0("../Results/Preprocessing/Correlation-",corMethod,"-clinicalvariables.pdf"), width = 15, height = 17)
+corrplot(cor(merged_data, method = corMethod), type = "lower",
+         tl.col = "black", tl.cex = 1.4, order="hclust",col = COL2('RdBu', 200)[200:1])
+dev.off()
+write.csv(merged_data,file="../Results/Preprocessing/CorrelationData.csv",row.names = TRUE,quote = FALSE)
+```
+
+### Visualize correlation between platelet and protein concentration in malaria cases (For our understanding)
+
+```{r}
+load("../Data/ReadyData.RData")
+row.names(cyt_df) <- cyt_df$id
+samples <- cyt_df[which(cyt_df$Group=="Pfalciparum"),"id"]
+cyt_log <- log2(cyt_df[samples,4:52])
+clinical_data <- read_excel("../Data/TF-joint clinical table_selected_stats_vJun22.xlsx")
+clinical_data <- clinical_data %>% filter(ID%in%row.names(cyt_log))
+clinical_data <- clinical_data %>% arrange(match(ID,row.names(cyt_log)))
+colnames(cyt_log)=gsub("\\.","",colnames(cyt_log))
+scatterplot_data <- cbind(cyt_log[,c("RANTES","ENA78","CD40L", "TARC")],PLT=clinical_data$B_PLT)
+scatterplot_data <- melt(scatterplot_data,id.vars ="PLT")
+
+library(ggpubr) 
+pdf(file="../Results/Preprocessing/Malaria_Correlation_Platelet.pdf",width=16,height = 4)
+ggplot(scatterplot_data,aes(x=value,y=PLT))+
+         geom_point(color="#FF7F00")+
+         stat_cor(method = "spearman",size=6)+
+         facet_wrap(~variable,scales = "free_x",ncol=4)+
+         labs(x="Protein Concentration",y="Platelet Counts")+
+         theme_bw(base_size = 16)
+dev.off()
+```
+
+### Visualize correlation matrix for each infection (Figure S3)
+
+```{r}
+corMethod="spearman"
+flattenCorrMatrix <- function(cormat, pmat) {
+  ut <- upper.tri(cormat)
+  data.frame(
+    row = rownames(cormat)[row(cormat)[ut]],
+    column = rownames(cormat)[col(cormat)[ut]],
+    cor  =(cormat)[ut],
+    p = pmat[ut]
+  )
+}
+correlationFile <- function(type){
+  cyt_log <- log2(cyt_df[,4:52])
+  cyt_log_selected <- cyt_log[which(NewGroup==type),]
+  corr_mat <- rcorr(as.matrix(cyt_log_selected), type = corMethod)
+  flat_corr_mat <- flattenCorrMatrix(corr_mat$r, corr_mat$P)
+  write.csv(flat_corr_mat, file=paste0("../Results/Preprocessing/",type,"-corr-",corMethod,".csv"))
+  flat_corr_mat <- flat_corr_mat %>% 
+    filter(abs(cor)>0.7 & p<0.05)
+  write.csv(flat_corr_mat, file=paste0("../Results/Preprocessing/",type,"-corr-significant-",corMethod,".csv"))
+}
+lapply(levels(NewGroup),function(x) correlationFile(x))
+
+corr_by_inf <-inf_nest_matrix %>% 
+  mutate(corr_res = map(data, correlation, method = corMethod, p_adjust = "none")) %>% 
+  unnest(cols = corr_res) %>% 
+  filter(abs(rho)>0.7) %>% 
+  dplyr::select(Group, Parameter1, Parameter2, rho, p)
+
+corr_by_inf_nest <- corr_by_inf %>% 
+  mutate(inf = Group) %>% 
+  group_by(Group) %>% 
+  nest()
+
+fun_network_plot <- function(df) {
+  vert <-  df %>%
+    rename(x=Parameter1,
+           y=Parameter2,
+           r=rho) %>%
+    select(x,y,r,p) %>% gather("item", "node", "x":"y") %>%
+    group_by(node) %>% count(node)
+
+  graph_cors <- df %>%
+    rename(x=Parameter1,
+           y=Parameter2,
+           r=rho) %>%
+    select(x,y,r,p) %>%
+    graph_from_data_frame(directed = FALSE, vertices=vert)
+  
+  layout <- create_layout(graph_cors, layout = 'igraph', algorithm = 'kk')
+   
+  gg <- ggraph(layout) +
+    geom_edge_link(aes(edge_alpha = abs(r), 
+                       color = r),
+                   edge_width = 2)+
+    guides(edge_alpha = "none", edge_width = "none") +
+    geom_node_point(aes(
+    ),
+    size = 3,
+    show.legend = T) +
+    guides(size = "none") +
+    scale_edge_color_gradientn(limits = c(-1, 1), colors = c("#4575b4","#FFFFFF","#d73027")) +
+    geom_node_text(aes(label = name),
+                   size=4,
+                   repel = TRUE,
+                   nudge_x = 0,
+                   nudge_y = 0) +
+    theme_graph(title_size = 10) +
+    scale_size(range = c(4,10)) +
+    labs(title = paste(df$inf),
+         edge_color="Spearman rho")
+}
+
+corr_by_inf_nest <- corr_by_inf_nest %>% 
+  mutate(plot_cor_network = map(data, fun_network_plot))
+
+pdf(file = paste0("../Results/Preprocessing/Correlation-",corMethod,"-perInfection.pdf"), width = 15, height = 17)
+plot(arrangeGrob(grobs = corr_by_inf_nest$plot_cor_network[1:4]))
+dev.off()
+```
+
+### Visualize Heatmap plots (Figure 1)
+
+```{r}
+cyt_log <- log2(cyt_df[,4:52])
+cyt_matrix_std <- standardize(cyt_log)
+rownames(cyt_matrix_std) <- cyt_df$id 
+cyt_matrix_std <- t(cyt_matrix_std)
+
+cyt_group_summary_mtrx <- as.matrix(cyt_group_summary[,2:ncol(cyt_group_summary)])
+rownames(cyt_group_summary_mtrx) <- cyt_group_summary$cytokine
+ann2 <- data.frame(colnames(cyt_group_summary_mtrx))
+colnames(ann2) <- "Group"
+col_fun2 <- colorRamp2(c(-2, -1, 0, 1, 2), rev(brewer.pal(5, "RdBu")))
+colAnn2 <- HeatmapAnnotation(df = ann2, which = "col", col = colours, name = "Group",
+                             simple_anno_size = unit(1, "cm"),show_legend = F)
+
+
+pdf("../Results/Preprocessing/heatmap_median_new.pdf", width = 10, height = 15)
+h2 <- Heatmap(cyt_group_summary_mtrx,  col = col_fun2, name = "z-scores", 
+        column_dend_height = unit(2, "cm"), row_dend_width = unit(2, "cm"), 
+        show_column_names = F, top_annotation = colAnn2,
+        rect_gp = gpar(col = "grey", lwd = .01), cluster_columns = F,cluster_rows = T)
+draw(h2)
+dev.off()
+
+rows <- rownames(cyt_group_summary_mtrx)[row_order(h2)]
+
+col_fun <- colorRamp2(c(-6.5, -5, -3.5, -2, -0.5, 0, 0.5, 2, 3.5 ,5 ,6.5), rev(brewer.pal(11, "RdBu")))
+ann <- data.frame(cyt_df[,3])
+colnames(ann) <- "Group"
+colours <- list("Group" = c("Dengue virus" = "#E41A1C","Enteric bacteria" = "#377EB8","Healthy control" =  "#4DAF4A", 
+                            "Influenza virus" = "#984EA3", "Pfalciparum" = "#FF7F00", "Pulmonary bacteria" = "#F781BF"))
+colAnn <- HeatmapAnnotation(df = ann, which = "col", col = colours, name = "Group",
+                            simple_anno_size = unit(1, "cm"),show_legend = F)
+
+pdf("../Results/Preprocessing/heatmap_cluster_new.pdf", width = 13, height = 15)
+h1<-Heatmap(cyt_matrix_std[rows,],  col = col_fun, name = "z-scores", 
+        column_dend_height = unit(2, "cm"), row_dend_width = unit(2, "cm"), 
+        show_column_names = F, top_annotation = colAnn,show_row_names = T,
+         cluster_columns = F,cluster_rows = F)
+draw(h1)
+dev.off()
+
+pdf("../Results/Preprocessing/Fig1_new.pdf", width = 13, height = 15)
+draw(h1+h2,widths = c(0.7, 0.3), heights = c(1, 1))
+dev.off()
+```
+
